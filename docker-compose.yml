@@ -1,0 +1,20 @@
+services:
+
+  depthcrafter:
+    image: depthcrafter:latest
+    build: .
+    working_dir: /app
+    volumes:
+      - .:/app
+      - ~/.cache:/root/.cache
+    ports:
+      - 7860:7860
+    command: gradio app.py
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

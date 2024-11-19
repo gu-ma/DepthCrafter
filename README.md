@@ -61,6 +61,12 @@ https://github.com/user-attachments/assets/62141cc8-04d0-458f-9558-fe50bc04cc21
     gradio app.py
     ``` 
 
+### 🐳 Docker
+- Run locally *(only tested in linux - wsl)*
+    ```bash
+    docker compose up --build
+    ```
+
 ### 🌟 Community Support
 - [NukeDepthCrafter](https://github.com/Theo-SAMINADIN-td/NukeDepthCrafter): 
     a plugin allows you to generate temporally consistent Depth sequences inside Nuke, 
