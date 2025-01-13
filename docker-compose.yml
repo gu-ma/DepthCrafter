@@ -8,7 +8,7 @@ services:
       - .:/app
       - ~/.cache:/root/.cache
     ports:
-      - 8300:7860
+      - 8400:7860
     command: gradio app.py
     tty: true
     deploy:
