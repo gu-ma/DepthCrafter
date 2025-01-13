@@ -2,8 +2,9 @@ import gc
 import os
 import numpy as np
 import torch
-import argparse
+
 from diffusers.training_utils import set_seed
+from fire import Fire
 
 from depthcrafter.depth_crafter_ppl import DepthCrafterPipeline
 from depthcrafter.unet import DiffusersUNetSpatioTemporalConditionModelDepthCrafter
@@ -64,14 +65,17 @@ class DepthCrafterDemo:
         seed: int = 42,
         track_time: bool = True,
         save_npz: bool = False,
+        save_exr: bool = False,
     ):
         set_seed(seed)
 
         frames, target_fps = read_video_frames(
-            video, process_length, target_fps, max_res, dataset,
+            video,
+            process_length,
+            target_fps,
+            max_res,
+            dataset,
         )
-        print(f"==> video name: {video}, frames shape: {frames.shape}")
-
         # inference the depth map using the DepthCrafter pipeline
         with torch.inference_mode():
             res = self.pipe(
@@ -96,11 +100,32 @@ class DepthCrafterDemo:
             save_folder, os.path.splitext(os.path.basename(video))[0]
         )
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        if save_npz:
-            np.savez_compressed(save_path + ".npz", depth=res)
         save_video(res, save_path + "_depth.mp4", fps=target_fps)
         save_video(vis, save_path + "_vis.mp4", fps=target_fps)
         save_video(frames, save_path + "_input.mp4", fps=target_fps)
+        if save_npz:
+            np.savez_compressed(save_path + ".npz", depth=res)
+        if save_exr:
+            import OpenEXR
+            import Imath
+
+            os.makedirs(save_path, exist_ok=True)
+            print(f"==> saving EXR results to {save_path}")
+            # Iterate over each frame and save as a separate EXR file
+            for i, frame in enumerate(res):
+                output_exr = f"{save_path}/frame_{i:04d}.exr"
+
+                # Prepare EXR header for each frame
+                header = OpenEXR.Header(frame.shape[1], frame.shape[0])
+                header["channels"] = {
+                    "Z": Imath.Channel(Imath.PixelType(Imath.PixelType.FLOAT))
+                }
+
+                # Create EXR file and write the frame
+                exr_file = OpenEXR.OutputFile(output_exr, header)
+                exr_file.writePixels({"Z": frame.tobytes()})
+                exr_file.close()
+
         return [
             save_path + "_input.mp4",
             save_path + "_vis.mp4",
@@ -128,91 +153,57 @@ class DepthCrafterDemo:
         return res_path[:2]
 
 
+def main(
+    video_path: str,
+    save_folder: str = "./demo_output",
+    unet_path: str = "tencent/DepthCrafter",
+    pre_train_path: str = "stabilityai/stable-video-diffusion-img2vid-xt",
+    process_length: int = -1,
+    cpu_offload: str = "model",
+    target_fps: int = -1,
+    seed: int = 42,
+    num_inference_steps: int = 5,
+    guidance_scale: float = 1.0,
+    window_size: int = 110,
+    overlap: int = 25,
+    max_res: int = 1024,
+    dataset: str = "open",
+    save_npz: bool = False,
+    save_exr: bool = False,
+    track_time: bool = False,
+):
+    depthcrafter_demo = DepthCrafterDemo(
+        unet_path=unet_path,
+        pre_train_path=pre_train_path,
+        cpu_offload=cpu_offload,
+    )
+    # process the videos, the video paths are separated by comma
+    video_paths = video_path.split(",")
+    for video in video_paths:
+        depthcrafter_demo.infer(
+            video,
+            num_inference_steps,
+            guidance_scale,
+            save_folder=save_folder,
+            window_size=window_size,
+            process_length=process_length,
+            overlap=overlap,
+            max_res=max_res,
+            dataset=dataset,
+            target_fps=target_fps,
+            seed=seed,
+            track_time=track_time,
+            save_npz=save_npz,
+            save_exr=save_exr,
+        )
+        # clear the cache for the next video
+        gc.collect()
+        torch.cuda.empty_cache()
+
+
 if __name__ == "__main__":
     # running configs
     # the most important arguments for memory saving are `cpu_offload`, `enable_xformers`, `max_res`, and `window_size`
     # the most important arguments for trade-off between quality and speed are
     # `num_inference_steps`, `guidance_scale`, and `max_res`
-    parser = argparse.ArgumentParser(description="DepthCrafter")
-    parser.add_argument(
-        "--video-path", type=str, required=True, help="Path to the input video file(s)"
-    )
-    parser.add_argument(
-        "--save-folder",
-        type=str,
-        default="./demo_output",
-        help="Folder to save the output",
-    )
-    parser.add_argument(
-        "--unet-path",
-        type=str,
-        default="tencent/DepthCrafter",
-        help="Path to the UNet model",
-    )
-    parser.add_argument(
-        "--pre-train-path",
-        type=str,
-        default="stabilityai/stable-video-diffusion-img2vid-xt",
-        help="Path to the pre-trained model",
-    )
-    parser.add_argument(
-        "--process-length", type=int, default=195, help="Number of frames to process"
-    )
-    parser.add_argument(
-        "--cpu-offload",
-        type=str,
-        default="model",
-        choices=["model", "sequential", None],
-        help="CPU offload option",
-    )
-    parser.add_argument(
-        "--target-fps", type=int, default=15, help="Target FPS for the output video"
-    )  # -1 for original fps
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument(
-        "--num-inference-steps", type=int, default=25, help="Number of inference steps"
-    )
-    parser.add_argument(
-        "--guidance-scale", type=float, default=1.2, help="Guidance scale"
-    )
-    parser.add_argument("--window-size", type=int, default=110, help="Window size")
-    parser.add_argument("--overlap", type=int, default=25, help="Overlap size")
-    parser.add_argument("--max-res", type=int, default=1024, help="Maximum resolution")
-    parser.add_argument(
-        "--dataset", 
-        type=str, 
-        default="open", 
-        choices=["open", "sintel", "scannet", "kitti", "bonn", 'nyu'], 
-        help="Assigned resolution for specific dataset evaluation"
-    )
-    parser.add_argument("--save_npz", type=bool, default=True, help="Save npz file")
-    parser.add_argument("--track_time", type=bool, default=False, help="Track time")
-
-    args = parser.parse_args()
-
-    depthcrafter_demo = DepthCrafterDemo(
-        unet_path=args.unet_path,
-        pre_train_path=args.pre_train_path,
-        cpu_offload=args.cpu_offload,
-    )
-    # process the videos, the video paths are separated by comma
-    video_paths = args.video_path.split(",")
-    for video in video_paths:
-        depthcrafter_demo.infer(
-            video,
-            args.num_inference_steps,
-            args.guidance_scale,
-            save_folder=args.save_folder,
-            window_size=args.window_size,
-            process_length=args.process_length,
-            overlap=args.overlap,
-            max_res=args.max_res,
-            dataset=args.dataset,
-            target_fps=args.target_fps,
-            seed=args.seed,
-            track_time=args.track_time,
-            save_npz=args.save_npz,
-        )
-        # clear the cache for the next video
-        gc.collect()
-        torch.cuda.empty_cache()
+    Fire(main)
