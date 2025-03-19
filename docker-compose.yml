@@ -1,14 +1,16 @@
+name: docker-misc-${CONTAINER_NAME}
 services:
-
   depthcrafter:
-    image: depthcrafter:latest
+    image: ${CONTAINER_NAME}:latest
+    container_name: ${CONTAINER_NAME}
     build: .
     working_dir: /app
     volumes:
       - .:/app
-      - ~/.cache:/root/.cache
+      - ${HF_HOME}:/root/.cache/huggingface
+      - ${TORCH_HOME}:/root/.cache/torch
     ports:
-      - 8800:7860
+      - ${DEPTHCRAFTER_PORT}:7860
     command: gradio app.py
     tty: true
     deploy:
